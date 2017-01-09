@@ -1,0 +1,82 @@
+#!/bin/bash
+
+function usage {
+  echo "Usage:"
+  echo "   rr [options...] <script file> [comma separated ip list]"
+  echo ""
+  echo "   (if no ip list specified, will read from stdin)"
+  echo ""
+  echo "Options:"
+  echo "  -h --help        Show this usage information"
+  echo "  -u --user        User, default ec2-user"
+  echo "  -s --safe        Default off, enabling safe will prevent connecting to unknown hosts"
+  echo "  -i --identity    SSH key file"
+  exit 1
+}
+
+HELP=""
+IDENTITY=""
+USER="ec2-user"
+CHECKS="-o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no"
+
+while [[ $# -gt 2 ]]
+do
+  key="$1"
+
+  case $key in
+      -u|--user)
+      USER="$2"
+      shift
+      ;;
+      -s|--safe)
+      CHECKS=""
+      ;;
+      -i|--identity)
+      IDENTITY="-i $2"
+      shift
+      ;;
+      -h|--help|-?)
+      HELP="on"
+      ;;
+      *)
+        # unknown option
+      ;;
+  esac
+  shift
+done
+
+if [[ ${HELP} = "on" ]]; then
+  usage
+fi
+
+SCRIPT=$1
+
+if [[ ! -e "${SCRIPT}" ]]; then
+  echo "Could not find script ${SCRIPT}"
+  usage
+  exit 1
+fi
+
+IPs=$2
+
+# if there are no IPs supplied in the command line arg
+# read from stdin
+if [[ -z "${IPs// }" ]]; then
+  echo "Reading from stdin"
+  while read line
+  do
+    IPs="${line} ${IPs}"
+  done < "${1:-/dev/stdin}"
+else
+  IPs=$(sed 's|,| |g' <<< $IPs)
+fi
+
+trap "trap - SIGTERM && kill -- -$$" SIGINT SIGTERM EXIT
+
+# Execute the script on all machines
+for IP in $IPs
+do
+  echo "Starting script on ${IP}"
+  cat ${SCRIPT} | ssh -o UserKnownHostsFile=/dev/null -o StrictHostKeyChecking=no -o LogLevel=quiet -t ${IDENTITY} ${USER}@${IP} | awk -F "\n" "{ print \"${IP} \t\" \$0 }" &
+done
+wait
